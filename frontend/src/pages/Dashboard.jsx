@@ -1,0 +1,36 @@
+import React, {useEffect,useMemo,useState} from "react";
+import {Alert,AppBar,Box,Button,Card,CardContent,Container,Grid,LinearProgress,Paper,Stack,Table,TableBody,TableCell,TableHead,TableRow,TextField,Toolbar,Typography} from "@mui/material";
+import LogoutIcon from "@mui/icons-material/Logout";
+import UploadFileIcon from "@mui/icons-material/UploadFile";
+import DownloadIcon from "@mui/icons-material/Download";
+import {PieChart,Pie,Tooltip,Cell,ResponsiveContainer,BarChart,Bar,XAxis,YAxis,CartesianGrid} from "recharts";
+import client from "../api/client";
+import {useAuth} from "../context/AuthContext";
+import {exportCsv,exportPdf} from "../utils/export";
+const money=v=>`₹${Number(v||0).toLocaleString("en-IN",{maximumFractionDigits:2})}`;
+
+export default function Dashboard(){
+ const {user,logout}=useAuth();
+ const [summary,setSummary]=useState(null),[categories,setCategories]=useState([]),[monthly,setMonthly]=useState([]),[transactions,setTransactions]=useState([]);
+ const [file,setFile]=useState(null),[uploading,setUploading]=useState(false),[message,setMessage]=useState(""),[loading,setLoading]=useState(true);
+ const [from,setFrom]=useState(""),[to,setTo]=useState(""),[search,setSearch]=useState("");
+ const query=useMemo(()=>({params:{...(from&&{from}),...(to&&{to}),...(search&&{search})}}),[from,to,search]);
+ async function load(){setLoading(true);try{const [s,c,m,t]=await Promise.all([client.get("/transactions/summary",query),client.get("/transactions/categories",query),client.get("/transactions/monthly",query),client.get("/transactions",query)]);setSummary(s.data.summary);setCategories(c.data.categories.map(x=>({...x,amount:Number(x.amount)})));setMonthly(m.data.monthly.map(x=>({...x,expenses:Number(x.expenses),income:Number(x.income)})));setTransactions(t.data.transactions);}finally{setLoading(false);}}
+ useEffect(()=>{load().catch(e=>setMessage(e.response?.data?.message||"Unable to load dashboard"));},[from,to,search]);
+ async function upload(){if(!file)return;setUploading(true);setMessage("");try{const data=new FormData();data.append("file",file);const r=await client.post("/transactions/upload",data);setMessage(`Imported ${r.data.inserted} transactions. ${r.data.duplicates} duplicates skipped and ${r.data.invalid} invalid rows ignored.`);setFile(null);document.getElementById("csv-input").value="";await load();}catch(e){setMessage(e.response?.data?.message||"Upload failed");}finally{setUploading(false);}}
+ return <>
+ <AppBar position="sticky"><Toolbar sx={{maxWidth:1200,width:"100%",mx:"auto"}}><Typography variant="h6" sx={{flexGrow:1,fontWeight:700}}>Expense Tracker</Typography><Typography sx={{mr:2,display:{xs:"none",sm:"block"}}}>{user?.name}</Typography><Button color="inherit" startIcon={<LogoutIcon/>} onClick={logout}>Logout</Button></Toolbar></AppBar>
+ <Container maxWidth="xl" sx={{py:4}}>
+  <Box sx={{mb:3}}><Typography variant="h4" fontWeight={700}>Financial overview</Typography><Typography color="text.secondary">Import a statement and review spending patterns.</Typography></Box>
+  <Paper sx={{p:3,mb:3,borderRadius:3}}><Typography variant="h6" fontWeight={700} gutterBottom>Import bank statement</Typography><Typography variant="body2" color="text.secondary" sx={{mb:2}}>CSV only. Maximum 5 MB and 10,000 rows.</Typography><Stack direction={{xs:"column",sm:"row"}} spacing={2} alignItems={{sm:"center"}}><input id="csv-input" type="file" accept=".csv,text/csv" onChange={e=>setFile(e.target.files?.[0]||null)}/><Button variant="contained" startIcon={<UploadFileIcon/>} disabled={!file||uploading} onClick={upload}>Upload CSV</Button></Stack>{uploading&&<LinearProgress sx={{mt:2}}/>}{message&&<Alert sx={{mt:2}} severity={message.includes("failed")||message.includes("Unable")?"error":"info"}>{message}</Alert>}</Paper>
+  <Paper sx={{p:3,mb:3,borderRadius:3}}><Stack direction={{xs:"column",md:"row"}} spacing={2} alignItems={{md:"center"}}><TextField label="From" type="date" InputLabelProps={{shrink:true}} value={from} onChange={e=>setFrom(e.target.value)}/><TextField label="To" type="date" InputLabelProps={{shrink:true}} value={to} onChange={e=>setTo(e.target.value)}/><TextField label="Search merchant" value={search} onChange={e=>setSearch(e.target.value)} sx={{minWidth:{md:280}}}/><Button onClick={()=>{setFrom("");setTo("");setSearch("");}}>Clear</Button></Stack></Paper>
+  {loading?<LinearProgress/>:<>
+   <Grid container spacing={2} sx={{mb:3}}>{[["Total expenses",money(summary?.total_expenses)],["Total income",money(summary?.total_income)],["Transactions",summary?.transaction_count||0]].map(([label,value])=><Grid size={{xs:12,sm:4}} key={label}><Card sx={{borderRadius:3}}><CardContent><Typography color="text.secondary">{label}</Typography><Typography variant="h5" fontWeight={700}>{value}</Typography></CardContent></Card></Grid>)}</Grid>
+   <Grid container spacing={3}>
+    <Grid size={{xs:12,lg:5}}><Paper sx={{p:2,height:420,borderRadius:3}}><Typography variant="h6" fontWeight={700}>Spending by category</Typography>{categories.length?<ResponsiveContainer width="100%" height="92%"><PieChart><Pie data={categories} dataKey="amount" nameKey="category" outerRadius={125} label>{categories.map((_,i)=><Cell key={i}/>)}</Pie><Tooltip formatter={v=>money(v)}/></PieChart></ResponsiveContainer>:<Typography color="text.secondary" sx={{mt:5,textAlign:"center"}}>No expense data.</Typography>}</Paper></Grid>
+    <Grid size={{xs:12,lg:7}}><Paper sx={{p:2,height:420,borderRadius:3}}><Typography variant="h6" fontWeight={700}>Monthly trend</Typography>{monthly.length?<ResponsiveContainer width="100%" height="92%"><BarChart data={monthly}><CartesianGrid strokeDasharray="3 3"/><XAxis dataKey="month"/><YAxis/><Tooltip formatter={v=>money(v)}/><Bar dataKey="expenses" name="Expenses"/><Bar dataKey="income" name="Income"/></BarChart></ResponsiveContainer>:<Typography color="text.secondary" sx={{mt:5,textAlign:"center"}}>No trend data.</Typography>}</Paper></Grid>
+    <Grid size={{xs:12}}><Paper sx={{p:2,borderRadius:3}}><Stack direction={{xs:"column",sm:"row"}} justifyContent="space-between" alignItems={{sm:"center"}} spacing={2} sx={{mb:2}}><Typography variant="h6" fontWeight={700}>Transactions</Typography><Stack direction="row" spacing={1}><Button variant="outlined" startIcon={<DownloadIcon/>} onClick={()=>exportCsv(transactions)}>CSV</Button><Button variant="outlined" startIcon={<DownloadIcon/>} onClick={()=>exportPdf(summary,categories,transactions)}>PDF</Button></Stack></Stack><Box sx={{overflowX:"auto"}}><Table size="small"><TableHead><TableRow><TableCell>Date</TableCell><TableCell>Description</TableCell><TableCell>Category</TableCell><TableCell>Type</TableCell><TableCell align="right">Amount</TableCell></TableRow></TableHead><TableBody>{transactions.map(t=><TableRow key={t.id}><TableCell>{String(t.transaction_date).slice(0,10)}</TableCell><TableCell>{t.description}</TableCell><TableCell>{t.category}</TableCell><TableCell>{t.transaction_type}</TableCell><TableCell align="right">{t.transaction_type==="DEBIT"?"-":"+"}{money(t.amount)}</TableCell></TableRow>)}</TableBody></Table>{!transactions.length&&<Typography sx={{p:3,textAlign:"center"}} color="text.secondary">No transactions found.</Typography>}</Box></Paper></Grid>
+   </Grid>
+  </>}
+ </Container></>;
+}
